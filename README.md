@@ -3,7 +3,7 @@ https://arxiv.org/html/2502.01618v3#S4
 https://www.stats.ox.ac.uk/~doucet/andrieu_doucet_holenstein_PMCMC.pdf
 https://openreview.net/pdf?id=xoXn62FzD0
 
-'''python
+```python
 
 class Particle:
     def __init__(self, temperature=0.8):
@@ -932,3 +932,4 @@ def take_a_step(question, llm, config, steps_so_far=[], first=False, temperature
     else:
         return particles + [reference_particle], stepwise_particle_tracker_before, stepwise_particle_tracker_afte
 ''"
+```
