@@ -1053,6 +1053,16 @@ def take_a_step(question, llm, config, steps_so_far=[], first=False, temperature
             "content": config.system_prompt,
         }
     ]
+#system_prompt: str = "Solve the following math problem efficiently and clearly:\n\n-
+For simple problems (2 steps or fewer):\nProvide a concise solution with minimal explanation.\n\n-
+For complex problems (3 steps or more):\nUse this step-by-step format:\n\n
+## Step 1: [Concise description]\n[Brief explanation and calculations]\n\n
+## Step 2: [Concise description]\n[Brief explanation and calculations]\n\n
+...\n\n
+Regardless of the approach, always conclude with:\n\n
+Therefore, the final answer is: $\\boxed{answer}$. I hope it is correct.\n\n
+Where [answer] is just the final number or expression that solves the problem."
+
     sampling_params = SamplingParams(
         temperature=temperature,  # Dynamic temperature
         max_tokens=1024,
