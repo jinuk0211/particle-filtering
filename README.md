@@ -237,9 +237,15 @@ def main(
             dataset = dataset.filter(lambda x: not os.path.exists(os.path.join(output_dir, f"{x['unique_id']}.pkl")))
         else:
             dataset = dataset.filter(lambda x: not os.path.exists(os.path.join(output_dir, f"{x['unique_id'].replace('/', '_')[:-5]}.pkl")))
+
+#amc2023
 #{"unique_id":3,"problem":"What is the value of\n\\[2^3 - 1^3 + 4^3 - 3^3 + 6^3 - 5^3 + \\dots + 18^3 - #17^3\\]",
 #"answer":3159.0,"url":"https:\/\/artofproblemsolving.com\/wiki\/index.php\/2023_AMC_12A_Problems\/Problem_12",
 #"question":"What is the value of\n\\[2^3 - 1^3 + 4^3 - 3^3 + 6^3 - 5^3 + \\dots + 18^3 - 17^3?\\]"}
+#math500
+#{"problem":"How many elements are in the intersection of the set of all the prime numbers less than 30 and the set of all the odd numbers greater than zero?",
+#"solution":"In other words, we're looking for the number of positive odd prime numbers less than 30. We go through all odd numbers less than 30 and note how many of them are prime. We get that 3, 5, 7, 11, 13, 17, 19, 23, and 29 are all of the positive odd prime numbers less than 30, a total of $\\boxed{9}$ elements in the intersection.",
+#"answer":"9","subject":"Number Theory","level":2,"unique_id":"test\/number_theory\/914.json"}
 
 
     logger.info(f"Length of dataset: {len(dataset)}")
