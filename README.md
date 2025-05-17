@@ -237,7 +237,9 @@ def main(
             dataset = dataset.filter(lambda x: not os.path.exists(os.path.join(output_dir, f"{x['unique_id']}.pkl")))
         else:
             dataset = dataset.filter(lambda x: not os.path.exists(os.path.join(output_dir, f"{x['unique_id'].replace('/', '_')[:-5]}.pkl")))
-#{"unique_id":3,"problem":"What is the value of\n\\[2^3 - 1^3 + 4^3 - 3^3 + 6^3 - 5^3 + \\dots + 18^3 - #17^3\\]","answer":3159.0,"url":"https:\/\/artofproblemsolving.com\/wiki\/index.php\/2023_AMC_12A_Problems\/Problem_12",#"question":"What is the value of\n\\[2^3 - 1^3 + 4^3 - 3^3 + 6^3 - 5^3 + \\dots + 18^3 - 17^3?\\]"}
+#{"unique_id":3,"problem":"What is the value of\n\\[2^3 - 1^3 + 4^3 - 3^3 + 6^3 - 5^3 + \\dots + 18^3 - #17^3\\]",
+#"answer":3159.0,"url":"https:\/\/artofproblemsolving.com\/wiki\/index.php\/2023_AMC_12A_Problems\/Problem_12",
+#"question":"What is the value of\n\\[2^3 - 1^3 + 4^3 - 3^3 + 6^3 - 5^3 + \\dots + 18^3 - 17^3?\\]"}
 
 
     logger.info(f"Length of dataset: {len(dataset)}")
