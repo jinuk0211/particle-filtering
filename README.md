@@ -2,7 +2,766 @@
 https://arxiv.org/html/2502.01618v3#S4
 https://www.stats.ox.ac.uk/~doucet/andrieu_doucet_holenstein_PMCMC.pdf
 https://openreview.net/pdf?id=xoXn62FzD0
+```bash
+NUM_PARTICLES=(32 16 8 4 2 1 64 128)
+HF_TOKEN={Your HF Token}
 
+
+for P in ${NUM_PARTICLES[@]}; do
+HF_TOKEN={HF_TOKEN}  python /new_data/probabilistic_inference_scaling/probabilistic_inference_scaling/scripts/pg.py \
+        --total-timesteps 1 \
+        --n-particles $P \
+        --dataset-start 0 \
+        --dataset-end 500 \
+        --prm-path Qwen/Qwen2.5-Math-PRM-7B \
+        --softmax-temp 1 \
+        --seed 96 \
+        --model-path meta-llama/Llama-3.1-8B-Instruct \
+        --output-dir /new_data/probabilistic_inference_scaling/probabilistic_inference_scaling/llama8b_qwenRM_results_jan20/seed96/softmax_temp1/model_tempPoint8/p$P/ \
+        --resample-inactive
+doneNUM_PARTICLES=(32 16 8 4 2 1 64 128)
+HF_TOKEN={Your HF Token}
+
+
+for P in ${NUM_PARTICLES[@]}; do
+HF_TOKEN={HF_TOKEN}  python /new_data/probabilistic_inference_scaling/probabilistic_inference_scaling/scripts/pg.py \
+        --total-timesteps 1 \
+        --n-particles $P \
+        --dataset-start 0 \
+        --dataset-end 500 \
+        --prm-path Qwen/Qwen2.5-Math-PRM-7B \
+        --softmax-temp 1 \
+        --seed 96 \
+        --model-path meta-llama/Llama-3.1-8B-Instruct \
+        --output-dir /new_data/probabilistic_inference_scaling/probabilistic_inference_scaling/llama8b_qwenRM_results_jan20/seed96/softmax_temp1/model_tempPoint8/p$P/ \
+        --resample-inactive
+done
+```
+
+pg.py
+------
+
+```python
+
+import logging
+import time
+import torch
+import click
+from vllm import LLM
+
+from datasets import load_dataset
+from sal.config import Config
+from sal.models.reward_models import load_prm
+from sal.search import particle_gibbs
+from sal.search.particle_gibbs_batch import particle_gibbs_batch
+from sal.utils.data import get_dataset, save_dataset
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+import os
+# Check CUDA_DEVICE_MAX_CONNECTIONS environment variable
+logger.info(f"CUDA_DEVICE_MAX_CONNECTIONS: {os.environ.get('CUDA_DEVICE_MAX_CONNECTIONS')}")
+
+@click.command()
+@click.option(
+    "--dataset-start",
+    default=0,
+    type=int,
+    help="Start index of the dataset to process.",
+    show_default=True,
+)
+@click.option(
+    "--dataset-end",
+    default=38,
+    type=int,
+    help="End index of the dataset to process.",
+    show_default=True,
+)
+@click.option(
+    "--seed",
+    default=None,
+    # type=int,
+    help="Random seed for reproducibility.",
+    show_default=True,
+)
+@click.option(
+    "--total-timesteps",
+    default=1,
+    type=int,
+    help="Total timesteps for particle Gibbs sampling.",
+    show_default=True,
+)
+@click.option(
+    "--n-particles",
+    default=4,
+    type=int,
+    help="Number of particles for Gibbs sampling.",
+    show_default=True,
+)
+@click.option(
+    "--softmax-temp",
+    default=1.0,
+    type=float,
+    help="Softmax temperature for sampling.",
+    show_default=True,
+)
+@click.option(
+    "--llm-sampling-temp",
+    default=0.8, 
+    type=float,
+    help="Temperature for LLM sampling.",
+    show_default=True,
+)
+@click.option(
+    "--temperature-annealing",
+    default=None,
+    type=(float, float, int),
+    help="Parameters for temperature annealing (start_temp, end_temp, total_steps).",
+)
+@click.option(
+    "--resample-inactive",
+    is_flag=True,
+    default=False,
+    help="Whether to resample inactive particles.",
+    show_default=True,
+)
+@click.option(
+    "--output-dir",
+    default=None,
+    type=click.Path(file_okay=False, writable=True),
+    help="Output directory to save the results.",
+)
+@click.option(
+    "--model-path",
+    default="meta-llama/Llama-3.2-1B-Instruct",
+    type=str,
+    help="Path to the language model.",
+    show_default=True,
+)
+@click.option(
+    "--prm-path",
+    default="RLHFlow/Llama3.1-8B-PRM-Deepseek-Data",
+    type=str,
+    help="Path to the probabilistic reward model.",
+    show_default=True,
+)
+@click.option(
+    "--dataset-path",
+    default=None,
+    type=str,
+    help="Path to the dataset.",
+    show_default=True,
+)
+def main(
+    dataset_start,
+    dataset_end,
+    seed,
+    total_timesteps,
+    n_particles,
+    llm_sampling_temp,
+    softmax_temp,
+    temperature_annealing,
+    resample_inactive,
+    output_dir,
+    model_path,
+    prm_path,
+    dataset_path,
+):
+    """
+    Run Particle Gibbs sampling for a dataset using a specified LLM and reward model.
+    """
+    start_time = time.time()  # Start timer
+
+    enable_prefix_caching = False
+
+    # Log all the arguments
+    logger.info("Starting execution with the following parameters:")
+    logger.info(f"Dataset start: {dataset_start}")
+    logger.info(f"Dataset end: {dataset_end}")
+    logger.info(f"Seed: {seed}")
+    logger.info(f"Total timesteps: {total_timesteps}")
+    logger.info(f"Number of particles: {n_particles}")
+    logger.info(f"LLM sampling temperature: {llm_sampling_temp}")
+    logger.info(f"Softmax temperature: {softmax_temp}")
+    logger.info(f"Temperature annealing: {temperature_annealing}")
+    logger.info(f"Resample inactive: {resample_inactive}")
+    logger.info(f"Output directory: {output_dir}")
+    logger.info(f"Enable prefix caching: {enable_prefix_caching}")
+    logger.info(f"Model path: {model_path}")
+    logger.info(f"PRM path: {prm_path}")
+    logger.info(f"Dataset path: {dataset_path}")
+
+    config = Config()
+    config.output_dir = output_dir
+    config.model_path = model_path
+    config.prm_path = prm_path
+
+    # Initialize LLM with available GPUs
+    num_gpus = 4 if "qwen2" in config.model_path.lower() else torch.cuda.device_count()
+
+    if seed == None or seed == "None":
+        logger.info("Initializing LLM without seed")
+        llm = LLM(
+            model=config.model_path,
+            gpu_memory_utilization=config.gpu_memory_utilization,
+            enable_prefix_caching=enable_prefix_caching,
+            tensor_parallel_size=num_gpus,
+        )
+    else:
+        seed = int(seed)
+        logger.info(f"Initializing LLM with seed: {seed}")
+        llm = LLM(
+            model=config.model_path,
+            gpu_memory_utilization=config.gpu_memory_utilization,
+            enable_prefix_caching=enable_prefix_caching,
+            seed=seed,
+            tensor_parallel_size=num_gpus,
+        )
+
+    # Load the probabilistic reward model
+    prm = load_prm(config)
+
+    # Load and preprocess the dataset
+    if dataset_path is not None:
+        dataset = load_dataset("json", data_files=dataset_path, split="train")
+    else:
+        dataset = get_dataset(config)
+
+    dataset = dataset.select(range(dataset_start, dataset_end))
+    # Filter the dataset to include only ones not already completed in the directory.
+    if output_dir is not None:
+        logger.info(f"Filtering dataset to exclude already completed problems in {output_dir}")
+        if isinstance(dataset[0]['unique_id'], int):
+            dataset = dataset.filter(lambda x: not os.path.exists(os.path.join(output_dir, f"{x['unique_id']}.pkl")))
+        else:
+            dataset = dataset.filter(lambda x: not os.path.exists(os.path.join(output_dir, f"{x['unique_id'].replace('/', '_')[:-5]}.pkl")))
+
+
+    logger.info(f"Length of dataset: {len(dataset)}")
+
+    # Perform Particle Gibbs sampling on the dataset
+    dataset = dataset.map(
+        particle_gibbs_batch if config.use_continuous_batching else particle_gibbs,
+        batched=False,
+        batch_size=1,
+        fn_kwargs={
+            "config": config,
+            "llm": llm,
+            "prm": prm,
+            "total_timesteps": total_timesteps,
+            "n_particles": n_particles,
+            "llm_sampling_temp": llm_sampling_temp,
+            "softmax_temp": softmax_temp,
+            "temperature_annealing": temperature_annealing,
+            "resample_inactive": resample_inactive,
+        },
+        desc="Running search",
+        load_from_cache_file=False,
+    )
+
+    end_time = time.time()  # End timer
+    elapsed_time = end_time - start_time
+    logger.info(f"Done 🔥! Time taken: {elapsed_time:.2f} seconds")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+load_prm
+-------
+
+```python
+
+def load_prm(config: Config) -> PRM:
+    if config.prm_path == "peiyi9979/math-shepherd-mistral-7b-prm":
+        return MathShepherd(config)
+
+    if config.prm_path == "RLHFlow/Llama3.1-8B-PRM-Deepseek-Data":
+        return RLHFFlow(config)
+    if config.prm_path == "PRIME-RL/EurusPRM-Stage2":
+        return PRIME(config)
+
+    if config.prm_path == "Qwen/Qwen2.5-Math-PRM-7B":
+        return QWEN_PRM(config)
+
+    raise NotImplementedError(f"PRM {config.prm_path} not implemented")
+
+from itertools import accumulate
+
+import torch
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    PreTrainedModel,
+    PreTrainedTokenizer,
+    AutoModel
+)
+
+from sal.config import Config
+import torch.nn.functional as F
+import re
+
+CANDIDATE_TOKENS = [648, 387]
+STEP_TAG_ID = 12902
+
+
+def batched_math_shepherd_inference(
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizer,
+    inputs: list[str],
+    batch_size: int,
+) -> list[list[float]]:
+    output_scores = []
+    for i in range(0, len(inputs), batch_size):
+        inputs_batch = inputs[i : i + batch_size]
+        inputs_batch = tokenizer(inputs_batch, padding=True, return_tensors="pt").to(
+            model.device
+        )
+        with torch.no_grad():
+            logits = model(**inputs_batch).logits[:, :, CANDIDATE_TOKENS]
+            scores = logits.softmax(dim=-1)[:, :, 0]
+            step_scores_flat = scores[inputs_batch.input_ids == STEP_TAG_ID].tolist()
+            # Split scores into sublist based on number of \n in the input
+            step_scores = []
+            counter = 0
+            for i in range(len(inputs_batch.input_ids)):
+                count = inputs_batch.input_ids[i].tolist().count(STEP_TAG_ID)
+                step_scores.append(step_scores_flat[counter : counter + count])
+                counter += count
+
+        # Store the step scores for this batch
+        output_scores.extend(step_scores)
+
+        # Clear GPU memory
+        del inputs_batch, logits, scores
+        torch.cuda.empty_cache()
+
+    return output_scores
+
+
+class PRM:
+    def __init__(self, search_config: Config, **model_kwargs):
+        self.search_config = search_config
+        if search_config.prm_path == "PRIME-RL/EurusPRM-Stage2":
+            self.model, self.ref_model, self.tokenizer = self.load_model_and_tokenizer(**model_kwargs)
+        else:
+            self.model, self.tokenizer = self.load_model_and_tokenizer(**model_kwargs)
+
+    def load_model_and_tokenizer(
+        self, **model_kwargs
+    ) -> tuple[PreTrainedModel, PreTrainedTokenizer]:
+        raise NotImplementedError
+
+    def score(
+        self, questions: list[str], outputs: list[list[str]]
+    ) -> list[list[float]]:
+        raise NotImplementedError
+
+
+class QWEN_PRM(PRM):
+    def __init__(self, search_config: Config, **model_kwargs):
+        super().__init__(search_config, **model_kwargs)
+        self.model, self.tokenizer = self.load_model_and_tokenizer()
+
+    def load_model_and_tokenizer(self) -> tuple[PreTrainedModel, PreTrainedTokenizer]:
+        model_name = "Qwen/Qwen2.5-Math-PRM-7B"
+        model = AutoModel.from_pretrained(model_name,
+                                        device_map="auto",
+                                        torch_dtype=torch.bfloat16,
+                                        trust_remote_code=True).eval()
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        return model, tokenizer
+    
+    def score(
+        self, questions: list[str], outputs: list[list[str]], outputs_is_single_step: bool = True
+    ) -> list[list[float]]:
+        '''
+        Score a batch of questions and their step-by-step outputs using PRIME scoring.
+        questions: list of questions
+        outputs: list of lists of N responses, where N answers correspond to 1 question. 
+        '''
+        # define a helper function. 
+        def make_step_rewards(logits, token_masks):
+            probabilities = F.softmax(logits, dim=-1)
+            probabilities = probabilities * token_masks.unsqueeze(-1) # bs, seq_len, num_labels
+            
+            all_scores_res = []
+            for i in range(probabilities.size(0)):
+                sample = probabilities[i] # seq_len, num_labels
+                positive_probs = sample[sample != 0].view(-1, 2)[:, 1] # valid_tokens, num_labels
+                non_zero_elements_list = positive_probs.cpu().tolist()
+                all_scores_res.append(non_zero_elements_list)
+            return all_scores_res
+
+        # TODO: implement QWEN-PRM scoring
+        all_scores = []
+        for question, answers in zip(questions, outputs, strict=True):
+            all_step_scores = []
+            for ans in answers:
+                single_step_score = []
+                # we assume here that the answers use "\n\n" to separate steps. 
+                if outputs_is_single_step:
+                    ans = re.sub(r'\n+', '\n', ans)
+
+                steps_list = ans.split("\n\n")
+                QWEN_PRM_SYSTEM_PROMPT = "Please reason step by step, and put your final answer within \\boxed{}."
+                messages = [
+                    {"role": "system", "content": QWEN_PRM_SYSTEM_PROMPT},
+                    {"role": "user", "content": question},
+                    {"role": "assistant", "content": "<extra_0>".join(steps_list) + "<extra_0>"},
+                ]
+
+                # Prepare conversation for scoring
+                conversation = self.tokenizer.apply_chat_template(
+                    messages, 
+                    tokenize=False, 
+                    add_generation_prompt=False
+                )
+
+                input_ids = self.tokenizer.encode(
+                    conversation, 
+                    return_tensors="pt", 
+                ).to(self.model.device)
+
+                outputs = self.model(input_ids=input_ids)
+
+                # get the step scores
+                step_sep_id = self.tokenizer.encode("<extra_0>")[0]
+                token_masks = (input_ids == step_sep_id)
+                step_scores = make_step_rewards(outputs[0], token_masks)
+
+                # make the scores cumulative through multiplication
+                # step_scores = [math.prod(step_scores[:i+1]) for i in range(len(step_scores))]
+
+                all_step_scores.extend(step_scores)
+
+            all_scores.append(all_step_scores)
+
+        return all_scores
+
+
+
+class PRIME(PRM):
+    def __init__(self, search_config: Config, **model_kwargs):
+        # override original init, because we need to load two models and a tokenizer
+        super().__init__(search_config, **model_kwargs)
+        self.model, self.ref_model, self.tokenizer = self.load_model_and_tokenizer()
+
+
+    def load_model_and_tokenizer(self) -> tuple[PreTrainedModel, PreTrainedModel, PreTrainedTokenizer]:
+        # Load PRM model
+        model = AutoModelForCausalLM.from_pretrained(
+            'PRIME-RL/EurusPRM-Stage2',
+            device_map="auto",
+            attn_implementation="flash_attention_2", 
+            torch_dtype=torch.float16,
+        ).eval()
+
+        # Load reference model
+        ref_model = AutoModelForCausalLM.from_pretrained(
+            'Qwen/Qwen2.5-Math-7B-Instruct',
+            device_map="auto",
+            attn_implementation="flash_attention_2",
+            torch_dtype=torch.float16,
+        ).eval()
+
+        # Load tokenizer
+        tokenizer = AutoTokenizer.from_pretrained('PRIME-RL/EurusPRM-Stage2')
+
+        return model, ref_model, tokenizer
+    
+    def score(
+        self, questions: list[str], outputs: list[list[str]]
+    ) -> list[list[float]]:
+        '''
+        Score a batch of questions and their step-by-step outputs using PRIME scoring.
+        questions: list of questions
+        outputs: list of lists of N responses, where N answers correspond to 1 question. 
+        '''
+
+
+
+        # TODO: implement PRIME scoring
+        # implement based on the commented example code above, and also the MathShepherd code
+        # Prepare inputs by combining questions and outputs
+        all_scores = []
+        for question, answers in zip(questions, outputs, strict=True):
+            all_step_scores = []
+            for ans in answers:
+                single_step_score = []
+                # we assume here that the answers use "\n\n" to separate steps. 
+                ans_list = ans.split("\n\n")
+                # Prepare conversation for scoring
+                conversation = [
+                    {"role": "user", "content": question},
+                    {"role": "assistant", "content": "\n\n".join(ans_list)},
+                ]
+
+                # Tokenize full conversation
+                input_ids = self.tokenizer.apply_chat_template(
+                    conversation,
+                    tokenize=True,
+                    add_generation_prompt=False,
+                    return_tensors='pt'
+                ).to(self.model.device)
+                
+                attention_mask = (input_ids != self.tokenizer.pad_token_id).to(self.model.device)
+
+                # Get token positions for each step
+                step_last_tokens = []
+                for step_num in range(0, len(ans_list) + 1):
+                    step_conv = [
+                        {"role": "user", "content": question},
+                        {"role": "assistant", "content": "\n\n".join(ans_list[:step_num])},
+                    ]
+                    conv_text = self.tokenizer.apply_chat_template(
+                        step_conv,
+                        tokenize=False,
+                        add_generation_prompt=False
+                    ).strip()
+                    
+                    if step_num != 0 and step_num != len(ans_list):
+                        conv_text += '\n\n'
+                        
+                    curr_ids = self.tokenizer.encode(conv_text, add_special_tokens=False)
+                    step_last_tokens.append(len(curr_ids) - 2)
+
+                inputs = {
+                    'input_ids': input_ids,
+                    'attention_mask': attention_mask,
+                    'labels': input_ids
+                }
+
+                label_mask = torch.zeros_like(input_ids)
+                label_mask[0, step_last_tokens[0]:] = 1
+                step_last_tokens = torch.tensor([step_last_tokens]).to(self.model.device)
+
+                def get_logps(model,inputs):
+                    logits = model(input_ids=inputs['input_ids'], attention_mask=inputs['attention_mask']).logits
+                    labels = inputs['labels'][:, 1:].clone().long()
+                    logits = logits[:, :-1, :]
+                    labels[labels == -100] = 0
+                    per_token_logps = torch.gather(logits.log_softmax(-1), dim=2, index=labels.unsqueeze(2)).squeeze(2)
+                    return per_token_logps
+
+                # Get log probabilities from both models
+                with torch.no_grad():
+                    # Main model logprobs
+                    per_token_logps = get_logps(self.model, inputs)
+                    ref_per_token_logps = get_logps(self.ref_model, inputs)
+
+
+                # Calculate rewards
+                raw_reward = per_token_logps - ref_per_token_logps
+                beta_reward = 0.001 * raw_reward * label_mask[:, 1:]  # Using 0.001 as default coefficient
+                beta_reward = beta_reward.cumsum(-1)
+                step_rewards = beta_reward.gather(dim=-1, index=step_last_tokens[:, 1:]).tolist()[0]
+                
+                all_step_scores.append(step_rewards)
+            
+            all_scores.append(all_step_scores)
+
+        return all_scores
+
+
+
+
+
+
+class MathShepherd(PRM):
+    def load_model_and_tokenizer(self) -> tuple[PreTrainedModel, PreTrainedTokenizer]:
+        model_id = "peiyi9979/math-shepherd-mistral-7b-prm"
+        tokenizer = AutoTokenizer.from_pretrained(model_id)
+        # For batched inference
+        tokenizer.pad_token = tokenizer.eos_token
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            device_map="auto",
+            attn_implementation="flash_attention_2",
+            torch_dtype=torch.float16,
+        ).eval()
+        return model, tokenizer
+
+    def score(
+        self, questions: list[str], outputs: list[list[str]]
+    ) -> list[list[float]]:
+        inputs_for_prm = []
+        lengths = []
+        for question, output in zip(questions, outputs):
+            prompt = self.search_config.system_prompt + "\n" + question + "\n"
+            special_outputs = [o.replace("\n\n", " ки\n\n") for o in output]
+            special_outputs = [
+                o + " ки" if o[-2:] != "\n\n" else o for o in special_outputs
+            ]
+            inputs_for_prm.extend([f"{prompt} {o}" for o in special_outputs])
+            lengths.append(len(output))
+
+        # TODO: tokenize each batch independently so there is less padding and faster inference
+        output_scores = batched_math_shepherd_inference(
+            self.model,
+            self.tokenizer,
+            inputs_for_prm,
+            self.search_config.prm_batch_size,
+        )
+        cumulative_lengths = list(accumulate(lengths))
+        # reshape the output scores to match the input
+        output_scores = [
+            output_scores[i:j]
+            for i, j in zip([0] + cumulative_lengths[:-1], cumulative_lengths)
+        ]
+
+        # stripped_output_scores = [] TODO: strip out the reward for previous steps
+        for output_score, output in zip(output_scores, outputs):
+            assert len(output_score) == len(
+                output
+            ), f"{len(output_score)} != {len(output)}"
+
+        return output_scores
+
+
+class RLHFFlow(PRM):
+    def load_model_and_tokenizer(
+        self, **model_kwargs
+    ) -> tuple[PreTrainedModel, PreTrainedTokenizer]:
+        tokenizer = AutoTokenizer.from_pretrained(
+            "RLHFlow/Llama3.1-8B-PRM-Deepseek-Data"
+        )
+        model = AutoModelForCausalLM.from_pretrained(
+            "RLHFlow/Llama3.1-8B-PRM-Deepseek-Data",
+            device_map="auto",
+            torch_dtype=torch.bfloat16,
+            **model_kwargs,
+        ).eval()
+        tokenizer.padding_side = "right"
+        tokenizer.pad_token = tokenizer.eos_token
+        model.config.pad_token_id = model.config.eos_token_id
+
+        plus_tag_id = tokenizer.encode("+")[-1]
+        minus_tag_id = tokenizer.encode("-")[-1]
+        self.candidate_tokens = [plus_tag_id, minus_tag_id]
+
+        return model, tokenizer
+
+    def score(
+        self,
+        questions: list[str],
+        outputs: list[list[str]],
+        batched: bool = True,
+        batch_size=8,
+    ) -> list[list[float]]:
+        if batched is True:
+            return self._score_batched(questions, outputs, batch_size=batch_size)
+        else:
+            return self._score_single(questions, outputs)
+
+    def _score_single(self, questions: list[str], outputs: list[list[str]]):
+        # reference code: https://github.com/RLHFlow/RLHF-Reward-Modeling/blob/main/math-rm/prm_evaluate.py
+        all_scores = []
+        for question, answers in zip(questions, outputs, strict=True):
+            all_step_scores = []
+            for ans in answers:
+                single_step_score = []
+                conversation = []
+                ans_list = ans.split("\n\n")
+                for k in range(len(ans_list)):
+                    if k == 0:
+                        # TODO: add the system prompt like we did for math shepard?
+                        text = question + " " + ans_list[0]
+                    else:
+                        text = ans_list[k]
+                    conversation.append({"content": text, "role": "user"})
+                    conversation.append({"content": "+", "role": "assistant"})
+                    input_ids = self.tokenizer.apply_chat_template(
+                        conversation, return_tensors="pt"
+                    ).to(self.model.device)
+                    with torch.no_grad():
+                        logits = self.model(input_ids).logits[
+                            :, -3, self.candidate_tokens
+                        ]  # simple version, the +/- is predicted by the '-3' position
+                        step_scores = logits.softmax(dim=-1)[
+                            :, 0
+                        ]  # 0 means the prob of + (1 mean -)
+                        # print(scores)
+                        single_step_score.append(
+                            step_scores[0]
+                            .detach()
+                            .to("cpu", dtype=torch.float32)
+                            .item()
+                        )
+
+                all_step_scores.append(single_step_score)
+            all_scores.append(all_step_scores)
+        return all_scores
+
+    def _score_batched(
+        self, questions: list[str], outputs: list[list[str]], batch_size: int = 2
+    ):
+        # The RLHFlow models are trained to predict the "+" or "-" tokens in a dialogue, but since these are not unique
+        # we need to introduce a dummy special token here for masking.
+
+        special_tok_id = self.tokenizer("ки", return_tensors="pt").input_ids[0, 1]
+        # We construct two parallel dialogues, one with a "+" token per assistant turn, the other with the dummy token "ки" for masking
+        conversations = []
+        conversations2 = []
+        for question, answers in zip(questions, outputs, strict=True):
+            for ans in answers:
+                conversation = []
+                conversation2 = []
+                ans_list = ans.split("\n\n")
+                for k in range(len(ans_list)):
+                    if k == 0:
+                        text = question + " " + ans_list[0]
+                    else:
+                        text = ans_list[k]
+                    conversation.append({"content": text, "role": "user"})
+                    conversation.append({"content": "+", "role": "assistant"})
+
+                    # we track to location of the special token with ки in order to extract the scores
+                    conversation2.append({"content": text, "role": "user"})
+                    conversation2.append({"content": "ки", "role": "assistant"})
+
+                conversations.append(conversation)
+                conversations2.append(conversation2)
+
+        output_scores = []
+        for i in range(0, len(conversations), batch_size):
+            convs_batch = conversations[i : i + batch_size]
+            convs2_batch = conversations2[i : i + batch_size]
+            inputs_batch = self.tokenizer.apply_chat_template(
+                convs_batch, padding=True, return_tensors="pt"
+            ).to(self.model.device)
+            inputs2_batch = self.tokenizer.apply_chat_template(
+                convs2_batch, padding=True, return_tensors="pt"
+            ).to(self.model.device)
+            assert inputs_batch.shape == inputs2_batch.shape
+            with torch.no_grad():
+                logits = self.model(inputs_batch).logits[:, :, self.candidate_tokens]
+                scores = logits.softmax(dim=-1)[
+                    :, :, 0
+                ]  # 0 means the prob of + (1 mean -)
+
+                for i in range(len(convs_batch)):
+                    # We slice on the N-1 token since the model is trained to predict the Nth one ("+" in this case)
+                    step_scores_flat = scores[i, :-1][
+                        inputs2_batch[i, 1:] == special_tok_id
+                    ].tolist()
+                    output_scores.append(step_scores_flat)
+
+        # reshape the output scores to match the input
+        reshaped_output_scores = []
+        counter = 0
+        for question, answers in zip(questions, outputs):
+            scores = []
+            for answer in answers:
+                scores.append(output_scores[counter])
+                counter += 1
+            reshaped_output_scores.append(scores)
+
+        return reshaped_output_scores
+```
 ```python
 
 class Particle:
