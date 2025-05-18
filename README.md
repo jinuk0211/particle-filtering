@@ -317,39 +317,6 @@ CANDIDATE_TOKENS = [648, 387]
 STEP_TAG_ID = 12902
 
 
-def batched_math_shepherd_inference(
-    model: PreTrainedModel,
-    tokenizer: PreTrainedTokenizer,
-    inputs: list[str],
-    batch_size: int,
-) -> list[list[float]]:
-    output_scores = []
-    for i in range(0, len(inputs), batch_size):
-        inputs_batch = inputs[i : i + batch_size]
-        inputs_batch = tokenizer(inputs_batch, padding=True, return_tensors="pt").to(
-            model.device
-        )
-        with torch.no_grad():
-            logits = model(**inputs_batch).logits[:, :, CANDIDATE_TOKENS]
-            scores = logits.softmax(dim=-1)[:, :, 0]
-            step_scores_flat = scores[inputs_batch.input_ids == STEP_TAG_ID].tolist()
-            # Split scores into sublist based on number of \n in the input
-            step_scores = []
-            counter = 0
-            for i in range(len(inputs_batch.input_ids)):
-                count = inputs_batch.input_ids[i].tolist().count(STEP_TAG_ID)
-                step_scores.append(step_scores_flat[counter : counter + count])
-                counter += count
-
-        # Store the step scores for this batch
-        output_scores.extend(step_scores)
-
-        # Clear GPU memory
-        del inputs_batch, logits, scores
-        torch.cuda.empty_cache()
-
-    return output_scores
-
 
 class PRM:
     def __init__(self, search_config: Config, **model_kwargs):
@@ -629,7 +596,38 @@ class MathShepherd(PRM):
             ), f"{len(output_score)} != {len(output)}"
 
         return output_scores
+def batched_math_shepherd_inference(
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizer,
+    inputs: list[str],
+    batch_size: int,
+) -> list[list[float]]:
+    output_scores = []
+    for i in range(0, len(inputs), batch_size):
+        inputs_batch = inputs[i : i + batch_size]
+        inputs_batch = tokenizer(inputs_batch, padding=True, return_tensors="pt").to(
+            model.device
+        )
+        with torch.no_grad():
+            logits = model(**inputs_batch).logits[:, :, CANDIDATE_TOKENS]
+            scores = logits.softmax(dim=-1)[:, :, 0]
+            step_scores_flat = scores[inputs_batch.input_ids == STEP_TAG_ID].tolist()
+            # Split scores into sublist based on number of \n in the input
+            step_scores = []
+            counter = 0
+            for i in range(len(inputs_batch.input_ids)):
+                count = inputs_batch.input_ids[i].tolist().count(STEP_TAG_ID)
+                step_scores.append(step_scores_flat[counter : counter + count])
+                counter += count
 
+        # Store the step scores for this batch
+        output_scores.extend(step_scores)
+
+        # Clear GPU memory
+        del inputs_batch, logits, scores
+        torch.cuda.empty_cache()
+
+    return output_scores
 
 class RLHFFlow(PRM):
     def load_model_and_tokenizer(
