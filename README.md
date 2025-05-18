@@ -1291,6 +1291,108 @@ Where [answer] is just the final number or expression that solves the problem."
         return particles, stepwise_particle_tracker_before, stepwise_particle_tracker_after 
     else:
         return particles + [reference_particle], stepwise_particle_tracker_before, stepwise_particle_tracker_after
+def particle_gibbs_batch(
+    x,
+    config,
+    llm,
+    prm,
+    total_timesteps=1,
+    n_particles=4,
+    resample_inactive=True,
+    softmax_temp=1.0,
+    temperature_annealing=(),
+    llm_sampling_temp=0.8,
+):
+    
+    particle_intermediate_storage = []
+    if isinstance(x["unique_id"], int):
+        question_id = x["unique_id"]
+    else:
+        question_id = x["unique_id"].replace("/", "_").strip(".json")
+    logger.info(f"Processing question: {question_id}")
+    particles_tracker = []
+    current_timestep = 1
+    current_particles, tracker_before, tracker_after = particle_gibbs_kernel(
+                            x["problem"], 
+                            llm, 
+                            prm, 
+                            config, 
+                            n_particles, 
+                            resample_inactive=resample_inactive,
+                            softmax_temp=softmax_temp,
+                            temperature_annealing=temperature_annealing,
+                            llm_sampling_temp=llm_sampling_temp,
+    )
+    particles_tracker.append(current_particles)
+    particle_intermediate_storage.append([copy.deepcopy(current_particles)])
 
+    # compute_budget_used = sum([len(p.trajectory) for p in current_particles])
+    if total_timesteps > 1:
+        while current_timestep < total_timesteps:
+            # preferred_particle = current_particles[
+            #     np.argmax([p.rewards[-1] for p in current_particles])
+            # ]
+            rewards = [particle.get_last_reward() for particle in current_particles]
+
+            logits = [inverse_sigmoid(r) for r in rewards]
+            logits = np.array(logits)
+
+            if temperature_annealing:
+                softmax_temp = temperature_linear_annealing(
+                    starting_temp=temperature_annealing[0],
+                    ending_temp=temperature_annealing[1],
+                    total_steps=temperature_annealing[2],
+                    current_step=current_timestep,
+                )
+
+            logger.info(f"Softmax temperature: {softmax_temp}")
+            weights = softmax(logits / softmax_temp)
+
+            preferred_particle = np.random.choice(
+                current_particles,
+                size=1,
+                p=weights,
+                replace=True,                             # before particles was active_particles
+            )[0]
+
+            preferred_particle.preferred = True
+
+            current_particles, tracker_before, tracker_after = particle_gibbs_kernel(
+                x["problem"],
+                llm,
+                prm,
+                config,
+                n_particles,
+                softmax_temp,
+                resample_inactive=resample_inactive,
+                reference_particle=preferred_particle,
+                temperature_annealing=temperature_annealing
+            )
+            particles_tracker.append(current_particles)
+            current_timestep += 1
+            particle_intermediate_storage.append([copy.deepcopy(current_particles)])
+
+    # # Create output directory if it doesn't exist
+    os.makedirs(config.output_dir, exist_ok=True)
+
+    save_path = os.path.join(config.output_dir, f"{question_id}.pkl")
+    with open(save_path, "wb") as f:
+        pickle.dump(particles_tracker, f)
+
+    intermediate_dir = os.path.join(config.output_dir, "intermediate")
+    os.makedirs(intermediate_dir, exist_ok=True)
+    save_path_intermediate = os.path.join(intermediate_dir, f"{question_id}_intermediate.pkl")
+    with open(save_path_intermediate, "wb") as f:
+        pickle.dump(particle_intermediate_storage, f)
+        
+    #with open(save_path.replace(".pkl", "_before.pkl"), "wb") as f:
+    #    pickle.dump(tracker_before, f)
+    
+    #with open(save_path.replace(".pkl", "_after.pkl"), "wb") as f:
+    #    pickle.dump(tracker_after, f)
+
+    logger.info(f"Saved particles to: {save_path}")
+
+    return x
 
 ```
