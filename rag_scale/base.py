@@ -39,6 +39,8 @@ if __name__ == "__main__":
   elif args.ds == 'arc':
     splits = {'train': 'ARC-Challenge/train-00000-of-00001.parquet', 'test': 'ARC-Challenge/test-00000-of-00001.parquet', 'validation': 'ARC-Challenge/validation-00000-of-00001.parquet'}
     df = pd.read_parquet("hf://datasets/allenai/ai2_arc/" + splits["train"])
+  elif args.ds == 'math':
+    df = pd.read_json("hf://datasets/HuggingFaceH4/MATH-500/test.jsonl", lines=True)
   
   with torch.no_grad():
     for row in range(len(df)):
@@ -54,11 +56,12 @@ if __name__ == "__main__":
         elif args.ds == 'arc':
           question = df['question'][row]
           prompt = question + "\nA)" + df['choices'][row]['text'][0] + " B)" + df['choices'][row]['text'][1] + " C)" + df['choices'][row]['text'][2] + " D)" + df['choices'][row]['text'][3]
-                
+        elif args.ds == 'math':
+          question = df['problem'][row]          
 
         input_list.append(question)
           
-        response = llm_proposal(model,tokenizer,prompt)
+        response = llm_proposal(model,tokenizer,question)
         print(response)
         final_input =  "Question: " + prompt + "\nAnswer: " + response[0] + '\n\n' + 'Extract only the final answer, without restating the question or explanation. Provide the answer as a short, direct response.'
         only_answer = llm_proposal(model,tokenizer,final_input)[0]
