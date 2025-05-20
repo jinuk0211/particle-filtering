@@ -1,6 +1,7 @@
 from collections import defaultdict
 from evaluator import GPQAEvaluator
-from generator import Generator, load_vLLM_model, generate_with_vLLM_model, LLM
+from generator import Generator,load_vLLM_model, generate_with_vLLM_model, qwen
+from transformers import AutoTokenizer
 from prompt import rag_prompt, eval_prompt
 import numpy as np
 from cfg import cfg
@@ -25,16 +26,17 @@ logger.setLevel(logging.INFO)
 import pickle
 import copy
 model_name = "Qwen/Qwen2.5-7B-Instruct"
-global global_value_model, global_tokenizer
-model,tokenizer=LLM(model='qwen2.5')
-global_value_model = model       
-global_tokenizer = tokenizer
+# global global_value_model, global_tokenizer
+# llm,tokenizer=qwen(model='qwen2.5')
+# global_value_model = llm       
+# global_tokenizer = tokenizer
 evaluator = GPQAEvaluator()
 print('llm done')
 
 config = Config()
 config.output_dir = 'math'
-config.model_path = "meta-llama/Llama-3.2-1B-Instruct"
+# config.model_path = "meta-llama/Llama-3.2-1B-Instruct"
+config.model_path ="Qwen/Qwen2.5-7B-Instruct"
 config.prm_path = "Qwen/Qwen2.5-Math-PRM-7B"
 llm_sampling_temp = 0.8
 #n_particles = 2
@@ -43,10 +45,11 @@ temperature_annealing=()
 softmax_temp=1.0
 prm = load_prm(config)
 print('prm done')
-#generator = Generator(cfg, tokenizer, model, evaluator) ##tokenizer, model = load_vLLM_model(cfg.model_ckpt, cfg.seed, cfg.tensor_parallel_size, cfg.half_precision)
+tokenizer, model = load_vLLM_model("Qwen/Qwen2.5-7B-Instruct",42)
+
+generator = Generator(cfg, tokenizer, model, evaluator) ##tokenizer, model = load_vLLM_model(cfg.model_ckpt, cfg.seed, cfg.tensor_parallel_size, cfg.half_precision)
 
 split = 100
-
 
 #reranker = True
 reranker = False
@@ -63,7 +66,7 @@ def parse_args():
     parser.add_argument(
         '--num_subquestion',
         type=int,
-        default=2,
+        default=1,
         help='Number of subquestions to generate per main question (default: 3)'
     )
     parser.add_argument(
@@ -105,10 +108,9 @@ if __name__ == "__main__":
 
     
   with torch.no_grad():
-    global_value_model = model 
-    global_tokenizer = tokenizer
+
         
-    for row in range(20,100):
+    for row in range(99):
       if args.ds == 'gpqa':
         question = ds['train']['Question'][row]
         prompt = ds['train'][row]['Question'] + 'A)' + ds['train'][row]['Correct Answer'].replace('\n','') + ' B)' + ds['train'][row]['Incorrect Answer 1'].replace('\n','') + ' C)' + ds['train'][row]['Incorrect Answer 2'].replace('\n','') + ' D)' + ds['train'][row]['Incorrect Answer 3'].replace('\n','')
@@ -148,14 +150,9 @@ if __name__ == "__main__":
       print(f"Initialized {args.particles} particles.")
       
       #responses, stops = take_a_step_for_batch(question, llm, config, first=True, temperature=llm_sampling_temp, n_particles=len(particles))
-      subquestions, subqids = generator.subq(question,subq_list,suba_list,num_subq=5)
-      for i in subquestions:
-        value = probability_subquestion_question(question, i) # probablistic score
-        value_list.append(value)
-      #print(f'values of subquestions{value_list}')
-      top_indices = np.argsort(value_list)[::-1][:1]
-      top_subquestion = [subquestions[i] for i in top_indices] #top3 subquestions
-      subq_list.append(top_subquestion[0].split('subanswer')[0])
+      subquestions, subqids = generator.subq(question,subq_list,suba_list,num_subq=1)
+ #top3 subquestions
+      subq_list.append(subquestions[0].split('subanswer')[0])
       #print(f'subq after subq:{subq_list}')
        
       
@@ -236,16 +233,11 @@ if __name__ == "__main__":
               if not particle.is_active():
                   continue      
               value_list = []                  
-              subquestions, stop = generator.subq(question,particle.subq_list,particle.suba_list,num_subq=5)
-              for i in subquestions:
-                value = probability_subquestion_question(question, i) # probablistic score
-                value_list.append(value)
-              #print(f'values of subquestions{value_list}')
-              top_indices = np.argsort(value_list)[::-1][:1]
-              top_subquestion = [subquestions[i] for i in top_indices] #top3 subquestions
+              subquestions, stop = generator.subq(question,particle.subq_list,particle.suba_list,num_subq=1)
+            
               # Take a step for each sampled particle
           
-              particle.subq_list.append(top_subquestion[0].split('subanswer')[0])                          
+              particle.subq_list.append(subquestions[0].split('subanswer')[0])                          
          
                   
               #response, stop = take_a_step(question, llm, config, first=False, steps_so_far=particle.trajectory)
