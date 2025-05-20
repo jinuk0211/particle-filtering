@@ -1,12 +1,12 @@
 import os, sys
-sys.path.insert(0, "../self_rag/retrieval_lm")
-from passage_retrieval import Retriever
+# sys.path.insert(0, "../self_rag/retrieval_lm")
+# from passage_retrieval import Retriever
 
-retriever = Retriever({})
+# retriever = Retriever({})
 #retriever.setup_retriever_demo("facebook/contriever-msmarco", "enwiki_2020/filtered.tsv", "enwiki_2020/enwiki_2020_contriever/*",  n_docs=5, save_or_load_index=False)
-retriever2 = Retriever({})
+# retriever2 = Retriever({})
 #retriever2.setup_retriever_demo("facebook/contriever-msmarco", "enwiki_2020/filtered1.tsv", "enwiki_2020/enwiki_2020_contriever2/*",  n_docs=5, save_or_load_index=False)
-retriever3 = Retriever({})
+# retriever3 = Retriever({})
 #retriever3.setup_retriever_demo("facebook/contriever-msmarco", "enwiki_2020/filtered2.tsv", "enwiki_2020/enwiki_2020_contriever3/*",  n_docs=5, save_or_load_index=False)
 #:nwiki_2020_intro_only/enwiki_dec_2020_contriever_intro/*"
 # workspace/self-rag/retrieval_lm/enwiki_2020_intro_only/enwiki_2020_dec_intro_only.jsonl
@@ -18,7 +18,7 @@ from collections import defaultdict
 from typing import List, Dict, Tuple
 import re
 from prompt import rag_prompt
-def LLM(model):
+def qwen(model):
      model_dict = {}
      if model == 'qwen3':
          print('init llm model')       
@@ -133,11 +133,6 @@ def load_vLLM_model(model_ckpt, seed, tensor_parallel_size=1, half_precision=Tru
     llm = LLM(
         model=model_ckpt,
         # tensor_parallel_size=tensor_parallel_size,
-        seed=seed,
-        dtype="float16",
-        trust_remote_code=True,
-        max_num_seqs=max_num_seqs,
-        swap_space=8,
     )
 
     return tokenizer, llm
