@@ -1740,3 +1740,129 @@ def particle_gibbs_batch(
     return x
 
 ```
+```python
+물론입니다! 이전에 설명한 POMCP (Partially Observable Monte Carlo Planning) 알고리즘의 핵심 개념을 바탕으로, 간단한 Python 예제와 함께 원본 논문 정보를 제공해드리겠습니다. 
+
+
+---
+
+🧠 POMCP 간단한 Python 예제
+
+아래는 POMCP의 핵심 아이디어를 간단하게 구현한 Python 예제입니다. 
+
+import random
+import math
+from collections import defaultdict
+
+class POMCPNode:
+    def __init__(self):
+        self.children = dict()  # action: POMCPNode
+        self.visits = 0
+        self.value = 0.0
+
+class POMCP:
+    def __init__(self, simulator, ucb_constant=1.0, num_simulations=1000):
+        self.simulator = simulator  # 환경 시뮬레이터
+        self.ucb_constant = ucb_constant
+        self.num_simulations = num_simulations
+        self.root = POMCPNode()
+
+    def search(self, belief):
+        for _ in range(self.num_simulations):
+            state = random.choice(belief)  # 입자에서 상태 샘플링
+            self.simulate(state, self.root, depth=0)
+        return max(self.root.children.items(), key=lambda item: item[1].value / item[1].visits)[0]
+
+    def simulate(self, state, node, depth):
+        if depth > self.simulator.max_depth:
+            return 0.0
+        if not node.children:
+            for action in self.simulator.get_actions(state):
+                node.children[action] = POMCPNode()
+            return self.rollout(state, depth)
+        # UCT를 사용하여 행동 선택
+        total_visits = sum(child.visits for child in node.children.values())
+        log_total = math.log(total_visits + 1)
+        best_score = -float('inf')
+        best_action = None
+        for action, child in node.children.items():
+            if child.visits == 0:
+                score = float('inf')
+            else:
+                score = (child.value / child.visits) + self.ucb_constant * math.sqrt(log_total / child.visits)
+            if score > best_score:
+                best_score = score
+                best_action = action
+        next_state, observation, reward = self.simulator.step(state, best_action)
+        if best_action not in node.children:
+            node.children[best_action] = POMCPNode()
+        child_node = node.children[best_action]
+        q = reward + self.simulate(next_state, child_node, depth + 1)
+        child_node.visits += 1
+        child_node.value += q
+        return q
+
+    def rollout(self, state, depth):
+        if depth > self.simulator.max_depth:
+            return 0.0
+        action = random.choice(self.simulator.get_actions(state))
+        next_state, observation, reward = self.simulator.step(state, action)
+        return reward + self.rollout(next_state, depth + 1)
+
+설명:
+
+POMCPNode: 각 노드를 나타내며, 자식 노드, 방문 횟수, 가치 값을 저장합니다.
+
+POMCP: POMCP 알고리즘의 주요 클래스입니다.
+
+search: 주어진 belief(입자 집합)에서 최적의 행동을 찾습니다.
+
+simulate: 시뮬레이션을 통해 노드의 가치를 업데이트합니다.
+
+rollout: 임의의 정책을 사용하여 시뮬레이션을 진행합니다.
+
+
+
+주의사항:
+
+이 코드는 POMCP의 핵심 아이디어를 간단하게 구현한 것으로, 실제 환경에서는 더 복잡한 요소들이 필요합니다.
+
+simulator는 환경의 동작을 정의하는 클래스이며, get_actions, step, max_depth 등의 메서드를 구현해야 합니다.
+
+
+
+---
+
+📄 POMCP 원본 논문 정보
+
+POMCP 알고리즘은 다음 논문에서 처음 소개되었습니다: 
+
+제목: Monte-Carlo Planning in Large POMDPs
+저자: David Silver, Joel Veness
+학회: Advances in Neural Information Processing Systems (NeurIPS) 2010 
+
+논문 링크:
+
+NeurIPS 공식 링크: 
+
+PDF 다운로드: 
+
+
+이 논문에서는 POMCP 알고리즘이 어떻게 대규모 POMDP 문제를 효율적으로 해결할 수 있는지에 대해 자세히 설명하고 있습니다. 
+
+
+---
+
+추가적으로, POMCP의 다양한 변형 및 응용에 대한 연구들도 진행되고 있습니다. 예를 들어, POMCP-PM(POMCP with Path Modification)은 가치 업데이트 경로를 수정하여 성능을 향상시키는 방법을 제안합니다. 
+
+관련 논문:
+
+A Partially Observable Monte Carlo Planning Algorithm Based on Path Modification
+
+
+
+
+더 자세한 내용이나 특정 부분에 대한 설명이 필요하시면 언제든지 말씀해주세요!
+
+
+```
